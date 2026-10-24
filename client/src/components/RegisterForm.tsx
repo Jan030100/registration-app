@@ -1,5 +1,10 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
-import type { RegisterFormData, RegisterFormErrors, FormStatus } from '../types/auth';
+import type {
+  RegisterFormData,
+  RegisterFormErrors,
+  FormStatus,
+} from '../types/auth';
+import { registerUser, ApiRequestError, NetworkError } from '../services/authApi';
 import './RegisterForm.css';
 
 const INITIAL_FORM: RegisterFormData = {
@@ -11,6 +16,12 @@ const INITIAL_FORM: RegisterFormData = {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
+const FORM_FIELDS: ReadonlyArray<keyof RegisterFormData> = [
+  'fullName',
+  'email',
+  'password',
+  'confirmPassword',
+];
 
 function validate(form: RegisterFormData): RegisterFormErrors {
   const errors: RegisterFormErrors = {};
@@ -42,6 +53,19 @@ function validate(form: RegisterFormData): RegisterFormErrors {
   return errors;
 }
 
+function mapServerFieldErrors(
+  details: Record<string, string> | undefined
+): RegisterFormErrors {
+  if (!details) return {};
+  const mapped: RegisterFormErrors = {};
+  for (const key of FORM_FIELDS) {
+    if (details[key]) {
+      mapped[key] = details[key];
+    }
+  }
+  return mapped;
+}
+
 export default function RegisterForm() {
   const [form, setForm] = useState<RegisterFormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<RegisterFormErrors>({});
@@ -51,7 +75,6 @@ export default function RegisterForm() {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
-  
     setErrors((prev) => ({ ...prev, [name]: undefined }));
     if (status === 'error') {
       setStatus('idle');
@@ -61,7 +84,7 @@ export default function RegisterForm() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (status === 'submitting') return; 
+    if (status === 'submitting') return;
 
     const validationErrors = validate(form);
     if (Object.keys(validationErrors).length > 0) {
@@ -72,15 +95,35 @@ export default function RegisterForm() {
 
     setStatus('submitting');
     setServerMessage('');
+    setErrors({});
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await registerUser(form);
       setStatus('success');
-      setServerMessage('Account created successfully!');
+      setServerMessage('Account created successfully. You can now log in.');
       setForm(INITIAL_FORM);
-    } catch {
+    } catch (error) {
       setStatus('error');
-      setServerMessage('Something went wrong. Please try again.');
+
+      if (error instanceof ApiRequestError) {
+        if (error.status === 400 && error.details) {
+          const fieldErrors = mapServerFieldErrors(error.details);
+          setErrors(fieldErrors);
+          setServerMessage(
+            Object.keys(fieldErrors).length > 0 ? 'Please fix the errors below.' : error.message
+          );
+        } else {
+          setServerMessage(error.message);
+        }
+        return;
+      }
+
+      if (error instanceof NetworkError) {
+        setServerMessage(error.message);
+        return;
+      }
+
+      setServerMessage('An unexpected error occurred. Please try again.');
     }
   };
 
